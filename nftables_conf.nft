@@ -1,0 +1,474 @@
+#!/usr/sbin/nft -f
+
+
+#  ========================================================
+#       FIREWALL
+#  =========================================================
+# |                                                         |
+# |                                                         |
+# |    ++=\\    //=++                                       |
+# |    ||  \\==//  ||                                       |
+# |    ||          ||                                       |
+# |    \\          //                                       |
+# |    \\          //                                       |
+# |     \\_      _//                                        |
+# |        \-__-/                                           |
+# |_________________________________________________________|
+
+
+#  ========================================================
+#       DOC [ details ]
+#  =========================================================
+# |                                                         |
+# | Script: Firewall VPN OFF                                |
+# | Author: Alexander Edemalm                               |
+# | Created: Jun 14, 2025                                   |
+# | Updated: Nov 23, 2025                                   |
+# |_________________________________________________________|
+
+
+#  ========================================================
+#       DOC [ description ]
+#  =========================================================
+# |                                                         |
+# | This script establishes a default-deny firewall on your |
+# | Linux system, blocking incoming connections by default. |
+# | It also blocks outgoing connections on known dangerous  |
+# | ports to improve security for daily users.              |
+# |                                                         |
+# | IMPORTANT: This configuration is intended for personal, |
+# | personal systems and is not suitable for server or      |
+# | production setups. It aims to enhance security for      |
+# | individual users who may not have extensive firewall    |
+# | experience.                                             |
+# |                                                         |
+# | DISCLAIMER: By using this configuration, you assume full|
+# | responsibility for the security and integrity of your   |
+# | system. The author is not liable for any damage or loss |
+# | caused by the use of this script.                       |
+# |                                                         |
+# | The user agrees to indemnify, defend, and hold harmless |
+# | the author from any claims, damages, or legal           |
+# | liabilities arising from the use or misuse of this      |
+# | script.                                                 |
+# |_________________________________________________________|
+
+
+#  ========================================================
+#       USAGE [ commands ]
+#  =========================================================
+# |                                                         |
+# | - GENERAL COMMANDS                                      |
+# |   - RESTART NFTABLES                                    |
+# |   - LIST RULESET                                        |
+# | - PORTS                                                 |
+# |   - OPEN ALL                                            |
+# |   - OPEN SPECIFIC                                       |
+# | - LOGS                                                  |
+# |_________________________________________________________|
+
+
+# --- RULES ---
+#
+# --- restart nftables / reload rules ---
+# sudo systemctl restart nftables
+#
+# --- list all rules currently active ---
+# sudo nft list ruleset
+
+# --- PORTS ---
+#
+# --- open all outgoing ports ---
+# sudo nft insert rule inet filter output counter accept
+#
+# --- open specific incoming port ---
+# UDP
+# sudo nft add rule inet filter input iif "<YOUR-LOCAL-INTERFACE>" udp dport <PORT-NUMBER> ct state new,established accept
+# TCP
+# sudo nft add rule inet filter input iif "<YOUR-LOCAL-INTERFACE>" tcp dport <PORT-NUMBER> ct state new,established accept
+#
+# --- open specific outgoing port ---
+# UDP
+# sudo nft add rule inet filter output iif "<YOUR-LOCAL-INTERFACE>" udp dport <PORT-NUMBER> ct state new,established accept
+# TCP
+# sudo nft add rule inet filter output iif "<YOUR-LOCAL-INTERFACE>" tcp dport <PORT-NUMBER> ct state new,established accept
+#
+# --- remove specific outgoing port ---
+# sudo nft delete rule inet filter output handle <PORT-NUMBER>
+#
+# --- list all outgoing ports ---
+# sudo nft -a list chain inet filter output
+#
+# --- LOGS ---
+#
+# --- log ports every 5 second ---
+# UDP
+# sudo nft add rule inet filter output ip protocol udp log prefix 'TEMP_OUT_UDP' flags all level info limit rate 5/secon
+# TCP
+# sudo nft add rule inet filter output ip protocol tcp log prefix 'TEMP_OUT_TCP' flags all level info limit rate 5/secon
+#
+# --- dislay log ---
+# sudo journalctl -f -t kernel | grep 'TEMP_OUT'
+# GREP port number only
+# sudo journalctl -f -t kernel | grep 'TEMP_OUT' | awk '{ for (i=1; i<=NF; i++) { if ($i ~ /dpt=/) { print substr($i, 5) } } }'
+
+
+#  ========================================================
+#       GLOBAL [ variables ]
+#  =========================================================
+# |                                                         |
+# | - flush ruleset                                         |
+# | - LOCAL IFACE                                           |
+# |_________________________________________________________|
+
+
+# --- flushing/removes rules ---
+flush ruleset
+
+# --- interface ---
+define LOCAL_IFACE = "<YOUR LOCAL INTERFACE>"
+
+
+#  ========================================================
+#       SECTION [ rules ]
+#  =========================================================
+# |                                                         |
+# | = early stack                                           |
+# |     - netdev                                            |
+# |     - inet mangle                                       |
+# | = ipv4 & ipv6                                           |
+# |     - inet                                              |
+# |_________________________________________________________|
+
+
+#  ========================================================
+#       SECTION-INNER [ early stack ]
+#  =========================================================
+
+
+# --- netdev filter ---
+# Arguments: 
+#   N/A
+table netdev filter {
+    chain ingress {
+        type filter hook ingress device $LOCAL_IFACE priority -500; policy accept;
+
+        # -- IP FRAGMENTS --
+        ip frag-off & 0x1fff != 0 counter drop
+
+        # -- TCP XMAS, NULL, MSS --
+        tcp flags & (fin|psh|urg) == fin|psh|urg counter drop
+        tcp flags & (fin|syn|rst|psh|ack|urg) == 0x0 counter drop
+        tcp flags syn \
+            tcp option maxseg size 1-535 \
+            counter drop
+    }
+}
+
+
+# --- global mangle filter table ---
+# Arguments: 
+#   N/A
+table inet mangle {
+    chain prerouting {
+        type filter hook prerouting priority -150; policy accept;
+
+        # -- Drop invalid packets --
+        ct state invalid counter drop
+
+        # -- TCP SYN (CT NEW) --
+        tcp flags & (fin|syn|rst|ack) != syn \
+            ct state new \
+            counter drop 
+    }
+}
+
+
+#  ========================================================
+#       SECTION-INNER [ ipv4 & ivp6 ]
+#  =========================================================
+
+
+# --- global filter table ---
+# Arguments:
+#   N/A
+table inet filter {
+
+     chain input {
+     type filter hook input priority 0; policy drop;
+
+        # -- ALLOW          --
+        # RISK: 1/5
+        # NAME: Loopback
+        # -------------------------------------------------------
+        #    Allows traffic to and from the local machine itself.
+        #    Essential for local application communication.
+        # -------------------------------------------------------
+        iif "lo" accept
+
+        # -- BLOCK / DROP   --
+        # RISK: 1/5
+        # NAME: Loopback- bloock spoofed
+        # -------------------------------------------------------
+        #    Blocks incoming packets on external interfaces (e.g., wifi)
+        #    that claim to originate from the loopback (127.0.0.0/8) range.
+        #    This prevents loopback address spoofing from external sources.
+        # -------------------------------------------------------
+        ip saddr 127.0.0.0/8 iif != "lo" drop
+        ip6 saddr ::1 iif != "lo" drop
+
+        # -- ALLOW          --
+        # -- RISK: 1/5
+        # -- NAME: Connection Tracking (Established/Related)
+        # -------------------------------------------------------
+        #    Crucial for receiving inbound responses to connections
+        #    your machine initiated (e.g., website data, Zoom video).
+        # -------------------------------------------------------
+        ct state established,related accept
+
+        # -- ALLOW:         -- PORT: 53
+        # -- RISK: 1/5
+        # -- NAME: DNS (Domain Name System)
+        # -------------------------------------------------------
+        #    Allows receiving DNS replies (usually covered by
+        #    established/related), ensuring hostname resolution works.
+        # -------------------------------------------------------
+        udp dport 53 ip saddr limit rate 5/second accept
+        tcp dport 53 ip saddr limit rate 5/second accept
+
+        # -- ALLOW          -- PORT: { 67, 68 }
+        # -- RISK: 1/5
+        # -- NAME: DHCP (Dynamic Host Configuration Protocol)
+        # -------------------------------------------------------
+        #    Allows the router/DHCP server to send an IP address
+        #    assignment back to your system.
+        # -------------------------------------------------------
+        udp sport 67 udp dport 68 accept
+
+        # -- ALLOW / LIMI   -- PORT: { 137-139, 445 }
+        # -- RISK: N/a
+        # -- NAME: NetBIOS/SMB
+        # -------------------------------------------------------
+        #
+        # -------------------------------------------------------
+        meta iif != "lo" udp dport { 137-139, 445 } drop
+        meta iif != "lo" tcp dport { 139, 445 } drop
+
+        # -- BLOCK / DROP   --
+        # -- RISK: 1/5
+        # -- NAME: Anti Spoofing- ipv4
+        # -------------------------------------------------------
+        #    Blocks incoming traffic from invalid or reserved IPv4 source
+        #    addresses (e.g., multicast, private ranges) from
+        #    outside the loopback interface, preventing source address spoofing.
+        # -------------------------------------------------------
+        ip saddr {
+            0.0.0.0/8,
+            10.0.0.0/8,
+            100.64.0.0/10,
+            127.0.0.0/8,
+            169.254.0.0/16,
+            172.16.0.0/12,
+            192.0.2.0/24,
+            192.168.0.0/16,
+            198.18.0.0/15,
+            224.0.0.0/4,
+            240.0.0.0/4
+        } iif != "lo" drop
+
+        # -- BLOCK / DROP   --
+        # -- RISK: 1/5
+        # -- NAME: Anti Spoofing- ipv6
+        # -------------------------------------------------------
+        #    Blocks incoming traffic from invalid or reserved IPv6 source
+        #    addresses (e.g., documentation, link-local, reserved blocks)
+        #    from outside the loopback interface, preventing source address spoofing.
+        # -------------------------------------------------------
+        ip6 saddr {
+            ::/128,                # Unspecified address
+            ::1/128,               # Loopback address
+            ::ffff:0:0/96,         # IPv4-mapped addresses
+            ::ffff:0:0:0/96,       # IPv4-translated addresses
+            64:ff9b::/96,          # IPv4-IPv6 translation
+            100::/64,              # Discard-Only Address Block
+            2001::/23,             # Reserved (formerly TEREDO)
+            2001:2::/48,           # Benchmarking
+            2001:10::/28,          # Reserved (ORCHID)
+            2001:db8::/32,         # Documentation prefix
+            2002::/16,             # 6to4
+            2620:4f:8000::/48,     # Direct Delegation AS112 service
+            fc00::/7,              # Unique Local Addresses (ULA)
+            fe80::/10              # Link-local addresses
+        } iif != "lo" drop
+
+        # -- ICMP restrictive --
+        # -- RISK: 1/5
+        # -- NAME: ICMP/ICMPv6 (Control Message Protocol)
+        # -------------------------------------------------------
+        #    Allows essential network diagnostics (like pings) and
+        #    error messages required for proper network function.
+        # -------------------------------------------------------
+        ip protocol icmp icmp type { echo-reply, destination-unreachable, time-exceeded } accept
+        meta nfproto ipv6 ip6 nexthdr icmpv6 icmpv6 type {
+            0,      # echo-reply
+            1,      # destination-unreachable
+            2,      # packet-too-big
+            3,      # time-exceeded
+            4,      # parameter-problem
+            133,    # router-solicitation
+            134,    # router-advertisement
+            135,    # neighbor-solicitation
+            136     # neighbor-advertisement
+        } accept
+
+        # -- ALLOW	      -- PORT: 5353
+        # -- RISK: N/A
+        # -- NAME: Chromecast mDNS
+        # -------------------------------------------------------
+        #
+        # -------------------------------------------------------
+        udp dport 5353 ip saddr 224.0.0.0/24 accept
+    }
+
+    chain output {
+        type filter hook output priority 0; policy accept;
+
+        # -- ALLOW          --
+        # RISK: 1/5
+        # NAME: Loopback
+        # -------------------------------------------------------
+        #   Allows traffic to and from the local machine itself.
+        #   Essential for local application communication.
+        # -------------------------------------------------------
+        oif "lo" accept
+
+        # -- ALLOW          --
+        # -- RISK: 1/5
+        # -- NAME: Connection Tracking (Established/Related)
+        # -------------------------------------------------------
+        #   Crucial for receiving inbound responses to connections
+        #   your machine initiated (e.g., website data, Zoom video).
+        # -------------------------------------------------------
+        ct state established,related accept
+
+        # -- BLOCK / DROP   -- PORT: 20, 21
+        # -- RISK: 3/5
+        # -- NAME: FTP(File Transfer Protocol)
+        # -------------------------------------------------------
+        #    Transfers data and credentials unencrypted,
+        #    if using SFTP/FTPS/WebDAV
+        # -------------------------------------------------------
+        tcp dport { 20, 21 } drop
+
+        # -- BLOCK / DROP   -- PORT: 23
+        # -- RISK: 4/5
+        # -- NAME: Telnet
+        # -------------------------------------------------------
+        #    sends all data, inc credentails in plain text
+        # -------------------------------------------------------
+        tcp dport 23 drop
+
+        # -- BLOCK / DROP   -- PORT: 69
+        # -- RISK:3/5
+        # -- NAME: TFTP(Trivial File Transfer Protocol)
+        # -------------------------------------------------------
+        #   Simple unauthenticated file transers
+        # -------------------------------------------------------
+        udp dport 69 drop
+
+        # -- BLOCK / DROP  --PORT: 137 - 139, 445
+        # -- RISK: N/A
+        # -- NAME: NetBIOS/SMB
+        # -------------------------------------------------------
+        #
+        # -------------------------------------------------------
+        meta oif != "lo" udp dport { 137-139, 445 } drop
+        meta oif != "lo" tcp dport 445 drop
+
+        # -- BLOCK / DROP   -- PORT: 161
+        # -- RISK: 3/5
+        # -- NAME: SNMP(Simple Network Management Protocol)
+        # -------------------------------------------------------
+        #    Monitoring network devices, if compromised leak
+        #    system information
+        # -------------------------------------------------------
+        udp dport 161 drop
+
+        # -- BLOCK DROP     -- PORT: 179
+        # -- RISK: 2/5
+        # -- NAME: BGP(Border Gateway Protocol)
+        # -------------------------------------------------------
+        #    Risk:2/5 Routing between atonomous systems
+        # -------------------------------------------------------
+        tcp dport 179 drop
+
+        # -- BLOCK / DROP   -- PORT: 389, 636
+        # -- RISK: 3/5
+        # -- NAME: LDAP(Lightweight Directory Access Protocl)
+        # -------------------------------------------------------
+        #    Enterpise network, querying directory, services
+        # -------------------------------------------------------
+        udp dport 389 drop
+        tcp dport { 389, 636} drop
+
+        # -- BLOCK / DROP  --PORT: 512 - 514
+        # -- RISK: 4/5
+        # -- NAME: RSH, Rlogind, Rexec
+        # -------------------------------------------------------
+        #    Unauthenticaed remote access, based on IP address
+        # -------------------------------------------------------
+        tcp dport { 512-514 } drop
+        udp dport { 512-514 } drop
+
+        # -- BLOCK / DROP  --PORT: 3389
+        # -- RISK: 4/5
+        # -- NAME: RDP(Remote Desktop Protocol)
+        # -------------------------------------------------------
+        #    Windows remote access service, possible for malware
+        #    using RDP
+        # -------------------------------------------------------
+        tcp dport 3389 drop
+
+        # -- BLOCK / DROP  --PORT: 4444
+        # -- RISK: 2/5
+        # -- NAME: Metasploit Default(Remote Access Tool)
+        # -------------------------------------------------------
+        #    Default listener for Metasploit, common hacking framework,
+        #    most common configuration of reverse-shell malware
+        # -------------------------------------------------------
+        tcp dport 4444 drop
+
+        # -- BLOCK / DROP  --PORT: 5900 - 5909
+        # -- RISK: 4/5
+        # -- NAME: VNC(Virtual Network Computing)
+        # -------------------------------------------------------
+        #    Graphical remote desktop protocol, external VNC server
+        #    for remote control
+        # -------------------------------------------------------
+        tcp dport { 5900-5909 } drop
+
+        # -- BLOCK / DROP  --PORT: 6667
+        # -- RISK: 3/5
+        # -- NAME: IRC(Internet Relay Chat)
+        # -------------------------------------------------------
+        #    Frequently used by botnets and malware, for command
+        #    and control communication
+        # -------------------------------------------------------
+        tcp dport 6667 drop
+
+        # -- BLOCK / DROP  --PORT: 6881 - 6889
+        # -- RISK: 2/5
+        # -- NAME: Bittorrent- Old Range
+        # -------------------------------------------------------
+        #    The original standard port range for bittorrent
+        #    clients, modern P2P uses randomized
+        # -------------------------------------------------------
+        tcp dport { 6881- 6889 } drop
+        udp dport { 6881-6889 } drop
+    }
+
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+
+    }
+}

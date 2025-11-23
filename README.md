@@ -16,13 +16,13 @@
 
 
 ## DETAILS
- **Script:** linux firewall daily driver\
+ **config:** linux firewall daily driver\
  **Author:** Alexander Edemalm\
  **Created:** June 14, 2025                                  
 
  
 ## ABOUT
-This script establishes a default-deny firewall on your Linux system,\
+This config establishes a default-deny firewall on your Linux system,\
 blocking incoming connections by default. It also blocks outgoing\
 connections on known dangerous ports to improve security for daily\
 users.                                
@@ -35,20 +35,20 @@ for individual users who may not have extensive firewall experience.
 ### DISCLAIMER: 
 By using this configuration, you assume full responsibility for the\
 security and integrity of your system. The author is not liable for any\
-damage or loss caused by the use of this script.                       
+damage or loss caused by the use of this config.                       
                                                         
 The user agrees to indemnify, defend, and hold harmless the author from\
 any claims, damages, or legal liabilities arising from the use or misuse\
-of this script.                                                 
+of this config.                                                 
 
 ## ⚙️ PREREQUSITES
 
-Before using this script, ensure you have the following prerequisites\
+Before using this config, ensure you have the following prerequisites\
 installed:
 
 - Linux system: Arch, Debian, Fedora Ubuntu, etc.
 
-- nftables: This script uses nftables for firewall configuration.\
+- nftables: This config uses nftables for firewall configuration.\
 Make sure nftables is installed and active on your system.
 
 ### Install nftables (if not installed):

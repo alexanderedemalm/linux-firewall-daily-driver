@@ -23,7 +23,7 @@
 # | Script: Firewall                                        |
 # | Author: Alexander Edemalm                               |
 # | Created: Jun 14, 2025                                   |
-# | Updated: Nov 23, 2025                                   |
+# | Updated: Nov 24, 2025                                   |
 # |_________________________________________________________|
 
 
@@ -233,8 +233,8 @@ table inet filter {
         #    Allows receiving DNS replies (usually covered by
         #    established/related), ensuring hostname resolution works.
         # -------------------------------------------------------
-        udp dport 53 ip saddr limit rate 5/second accept
-        tcp dport 53 ip saddr limit rate 5/second accept
+        udp dport 53 limit rate 5/second accept
+        tcp dport 53 limit rate 5/second accept
 
         # -- ALLOW          -- PORT: { 67, 68 }
         # -- RISK: 1/5
